@@ -1,0 +1,276 @@
+
+#적절한 AMI를 찾기위한 명령어
+aws ec2 describe-images --filters "Name=description,Values=Amazon Linux AMI * x86_64 HVM GP2" --query 'Images[*].[CreationDate, Description, ImageId]' --output text | sort -k 1 | tail
+
+#vpc id 확인
+aws ec2 describe-vpcs
+
+#보안그룹 생성
+aws ec2 create-security-group \
+--group-name HelloWorld \
+--description "Hello World Demo" \
+--vpc-id vpc-00cd25c22d315ab10
+
+==> 보안그룹 생성 결과
+{
+    "GroupId": "sg-026c40c9a993c72d5"
+}
+
+#보안그룹 인바운드 트래픽 열기
+aws ec2 authorize-security-group-ingress \
+--group-name HelloWorld \
+--protocol tcp \
+--port 22 \
+--cidr 0.0.0.0/0
+
+aws ec2 authorize-security-group-ingress \
+--group-name HelloWorld \
+--protocol tcp \
+--port 3000 \
+--cidr 0.0.0.0/0
+
+#변경사항 확인
+aws ec2 describe-security-groups \
+--group-name HelloWorld \
+--output text
+
+#ec2 ssh 키 생성
+aws ec2 create-key-pair --key-name EffectiveDevopsAWS --query 'KeyMaterial' --output text > ~/.ssh/EffectiveDevopsAWS.pem
+aws ec2 describe-key-pairs --key-name EffectiveDevopsAWS
+==> 결과
+{
+    "KeyPairs": [
+        {
+            "KeyPairId": "key-05fc27b0adbc977d8",
+            "KeyFingerprint": "c3:3c:be:d5:c3:4b:8b:d7:73:26:3b:9f:45:48:ee:e2:e8:63:e4:20",
+            "KeyName": "EffectiveDevopsAWS",
+            "Tags": []
+        }
+    ]
+}
+
+cat ~/.ssh/EffectiveDevopsAWS.pem
+#읽기 전용권한 설정
+chmod 400 ~/.ssh/EffectiveDevopsAWS.pem
+
+#ec2 인스턴스 띄우기
+aws ec2 run-instances \
+--instance-type t2.micro \
+--key-name EffectiveDevopsAWS \
+--security-group-ids sg-026c40c9a993c72d5 \
+--image-id ami-ebc47185
+
+#ec2 인스턴스 생성시 진행사항 추적 (위 명령어의 출력에서 인스턴스 id를 찾는다.)
+aws ec2 describe-instance-status --instance-ids i-0caa3d7fc6d1d2622
+aws ec2 describe-instance-status --instance-ids i-0caa3d7fc6d1d2622 --output text | grep -i SystemStatus
+==> 결과
+SYSTEMSTATUS	ok
+
+#실행중인 인스턴스의 DNS 명 찾기
+aws ec2 describe-instances \
+--instance-ids i-0caa3d7fc6d1d2622 \
+--query "Reservations[*].Instances[*].PublicDnsName"
+==> 결과
+[
+    [
+        "ec2-13-125-245-199.ap-northeast-2.compute.amazonaws.com"
+    ]
+]
+
+#DNS 명과 ssh 로 인스턴스에 연결하기
+ssh -i ~/.ssh/EffectiveDevopsAWS.pem ec2-user@ec2-13-125-245-199.ap-northeast-2.compute.amazonaws.com
+
+#ec2 에 nodejs 설치하기
+[ec2]$ sudo yum install --enablerepo=epel -y nodejs
+[ec2]$ node -v
+#헬로월드 파일 내려받기
+[ec2]$ wget https://raw.githubusercontent.com/yogeshraheja/Effective-DevOps-with-AWS/master/Chapter02/helloworld.js -O /home/ec2-user/helloworld.js
+#헬로월드 어플리케이션 실행
+[ec2]$ node helloworld.js
+
+#설정파일 내려받기
+[ec2]$ sudo wget https://raw.githubusercontent.com/yogeshraheja/Effective-DevOps-with-AWS/master/Chapter02/helloworld.conf -O /etc/init/helloworld.conf
+#시작
+[ec2]$ sudo start helloworld
+#종
+[ec2]$ sudo stop helloworld
+
+[ec2]$ ec2-metadata --instance-id
+==> 결과
+instance-id: i-0caa3d7fc6d1d2622
+
+#로그아
+[ec2]$ exit
+
+#인스턴스 종료
+aws ec2 terminate-instances --instance-ids i-0caa3d7fc6d1d2622
+
+===========================================================================================================
+클라우드 포메이션으로 인프라 관리하기
+===========================================================================================================
+aws cloudformation help
+
+https://raw.githubusercontent.com/yogeshraheja/Effective-DevOps-with-AWS/master/Chapter03/EffectiveDevOpsTemplates/helloworld-cf-template-part-1.py
+
+#명령줄 인터페이스로 스택을 띄우기
+aws cloudformation create-stack \
+--capabilities CAPABILITY_IAM \
+--stack-name ansible \
+--template-body file://helloworld-cf-v2.template \
+--parameters ParameterKey=KeyPair,ParameterValue=EffectiveDevOpsAWS
+
+==> 결과 : KeyPair위치찾기
+{
+    "StackId": "arn:aws:cloudformation:ap-northeast-2:174323244164:stack/ansible/56340870-5303-11eb-ab88-06aa116f0752"
+}
+
+#엔서블 깃 공식 리포지터리에서 파이썬 스크립트를 내려받고 실행권한 부여하기
+curl -Lo ec2.py http://bit.ly/2v4SwE5
+chmod +x ec2.py
+
+ec2.py --refresh-cache
+
+#ansible ping 명령어로 해당 정보(인스탄스) 조회
+ansible --private-key ~/.ssh/EffectiveDevOpsAWS.pem ec2 -m ping
+==> 결과
+3.35.4.122 | SUCCESS => {
+    "ansible_facts": {
+        "discovered_interpreter_python": "/usr/bin/python"
+    },
+    "changed": false,
+    "ping": "pong"
+}
+
+#ansible 명령어로 원격 서버에 임의의 명령어 실행하기
+ansible --private-key ~/.ssh/EffectiveDevOpsAWS.pem '3.35.4.*' -a 'df -h'
+
+
+ansible-playbook helloworld.yml --private-key ~/.ssh/EffectiveDevOpsAWS.pem -e target=ec2 --list-hosts
+==> 결과
+playbook: helloworld.yml
+
+  play #1 (ec2): ec2	TAGS: []
+    pattern: [u'ec2']
+    hosts (1):
+      3.35.4.122
+
+
+ansible-playbook helloworld.yml --private-key ~/.ssh/EffectiveDevOpsAWS.pem -e target=3.35.4.122 --check
+
+ansible-playbook helloworld.yml --private-key ~/.ssh/EffectiveDevOpsAWS.pem -e target=3.35.4.122
+
+ansible '15.164.216.131' \
+--private-key ~/.ssh/EffectiveDevOpsAWS.pem \
+--become \
+-m yum -a 'name=git enablerepo=epel state=installed'
+
+ansible '15.164.216.131' \
+--private-key ~/.ssh/EffectiveDevOpsAWS.pem \
+--become \
+-m yum -a 'name=ansible enablerepo=epel state=installed'
+
+ansible '15.164.99.25' \
+--private-key ~/.ssh/EffectiveDevOpsAWS.pem \
+-m cron -a 'name=ansible-pull minute="*/10" job="/usr/bin/ansible-pull -U https://github.com/dokkl/ansible helloworld.yml -i localhost --sleep 60"'
+
+
+python ansiblebase-cf-template.py > ansiblebase.template
+aws cloudformation update-stack \
+--stack-name ansible \
+--template-body file://ansiblebase.template \
+--parameters ParameterKey=KeyPair,ParameterValue=EffectiveDevopsAWS
+==> 결과
+{
+    "StackId": "arn:aws:cloudformation:ap-northeast-2:174323244164:stack/ansible/6bb46f40-53c2-11eb-a2d9-02a6867bd928"
+}
+
+aws cloudformation wait stack-update-complete --stack-name ansible
+aws cloudformation describe-stacks \
+--stack-name helloworld \
+--query 'Stacks[0].Outputs[0]'
+
+#스택 제거
+aws cloudformation delete-stack --stack-name ansible
+aws cloudformation delete-stack --stack-name helloworld
+
+
+===========================================================================================================
+4장 테라폼
+===========================================================================================================
+
+#콘솔에서 인스탄스 생성 (이미지 아이디 : ami-ebc47185)
+#인스턴스 안에서 직접 애플리케이션 설치하기
+ssh -i ~/.ssh/EffectiveDevopsAWS.pem ec2-user@52.79.70.244
+
+sudo yum install --enablerepo=epel -y nodejs
+sudo wget https://raw.githubusercontent.com/yogeshraheja/Effective-DevOps-with-AWS/master/Chapter02/helloworld.js -O /home/ec2-user/helloworld.js
+sudo wget https://raw.githubusercontent.com/yogeshraheja/Effective-DevOps-with-AWS/master/Chapter02/helloworld.conf -O /etc/init/helloworld.conf
+sudo start helloworld
+curl http://52.79.70.244:3000
+==> 결과
+Hello World
+
+#AWS CLI로 인스턴스 생성하고 애플리케이션 배포하기
+aws ec2 run-instances \
+--instance-type t2.micro \
+--key-name EffectiveDevopsAWS \
+--security-group-ids sg-026c40c9a993c72d5 \
+--image-id ami-ebc47185
+
+aws ec2 describe-instances \
+--instance-ids i-064a4b611621008fb \
+--query "Reservations[*].Instances[*].PublicDnsName"
+
+ssh -i ~/.ssh/EffectiveDevopsAWS.pem ec2-user@ec2-13-124-214-11.ap-northeast-2.compute.amazonaws.com
+
+sudo yum install --enablerepo=epel -y nodejs
+sudo wget https://raw.githubusercontent.com/yogeshraheja/Effective-DevOps-with-AWS/master/Chapter02/helloworld.js -O /home/ec2-user/helloworld.js
+sudo wget https://raw.githubusercontent.com/yogeshraheja/Effective-DevOps-with-AWS/master/Chapter02/helloworld.conf -O /etc/init/helloworld.conf
+sudo start helloworld
+curl http://ec2-13-124-214-11.ap-northeast-2.compute.amazonaws.com:3000
+==> 결과
+Hello World
+
+https://raw.githubusercontent.com/yogeshraheja/EffectiveDevOpsTerraform/master/firstproject/ec2.tf
+terraform init
+terraform validate
+terraform plan
+terraform apply --auto-approve
+terraform show
+terraform destroy
+
+===========================================================================================================
+5장 ci/cd
+===========================================================================================================
+#ec2 인스탄스 구동
+aws cloudformation create-stack \
+--capabilities CAPABILITY_IAM \
+--stack-name jenkins \
+--template-body file://jenkins-cf.template \
+--parameters ParameterKey=KeyPair,ParameterValue=EffectiveDevopsAWS
+==> 결과
+{
+    "StackId": "arn:aws:cloudformation:ap-northeast-2:174323244164:stack/jenkins/3c690900-549c-11eb-ab7d-02ea5112e8c2"
+}
+
+aws cloudformation wait stack-create-complete \
+--stack-name jenkins
+
+aws cloudformation describe-stacks \
+--stack-name jenkins \
+--query 'Stacks[0].Outputs[0]'
+==> 결과
+{
+    "OutputKey": "InstancePublicIp",
+    "OutputValue": "13.125.16.195",
+    "Description": "Public IP of our instance."
+}
+
+
+
+
+
+
+
+
+
